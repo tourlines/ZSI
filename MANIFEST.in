@@ -1,0 +1,8 @@
+include CHANGES
+recursive-include ZSI *.py
+recursive-include scripts *
+recursive-include doc *
+recursive-include samples *
+recursive-include test *.py README *.wsdl *.xsd
+recursive-include test/wsdl2py config.txt
+recursive-include interop *.py README *.wsdl *.xsd
