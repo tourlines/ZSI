@@ -7,18 +7,19 @@ from ZSI import _copyright, _children, _child_elements, \
     _inttypes, _stringtypes, _seqtypes, _find_arraytype, _find_href, \
     _find_type, _find_xmlns_prefix, _get_idstr, EvaluateException, \
     ParseException
-    
+
 from TC import _get_element_nsuri_name, \
      _get_xsitype, TypeCode, Any, AnyElement, AnyType, \
      Nilled, UNBOUNDED
-    
-from schema import ElementDeclaration, TypeDefinition, \
-    _get_substitute_element, _get_type_definition
+
+from schema import GED, ElementDeclaration, TypeDefinition, \
+    _get_substitute_element, _get_type_definition, _is_substitute_element
 
 from ZSI.wstools.Namespaces import SCHEMA, SOAP
 from ZSI.wstools.Utility import SplitQName
 from ZSI.wstools.logging import getLogger as _GetLogger
 import re, types
+from copy import copy as _copy
 
 _find_arrayoffset = lambda E: E.getAttributeNS(SOAP.ENC, "offset")
 _find_arrayposition = lambda E: E.getAttributeNS(SOAP.ENC, "position")
@@ -51,13 +52,17 @@ def _get_type_or_substitute(typecode, pyobj, sw, elt):
     # Element WildCard
     if isinstance(typecode, AnyElement):
         return sub
- 
+
     # Global Element Declaration
     if isinstance(sub, ElementDeclaration):
         if (typecode.nspname,typecode.pname) == (sub.nspname,sub.pname):
             raise TypeError(\
                 'bad usage, failed to serialize element reference (%s, %s), in: %s' %
                  (typecode.nspname, typecode.pname, sw.Backtrace(elt),))
+
+        # check substitutionGroup
+        if _is_substitute_element(typecode, sub):
+            return sub
 
         raise TypeError(\
             'failed to serialize (%s, %s) illegal sub GED (%s,%s): %s' %
@@ -70,37 +75,27 @@ def _get_type_or_substitute(typecode, pyobj, sw, elt):
             'failed to serialize substitute %s for %s,  not derivation: %s' %
              (sub, typecode, sw.Backtrace(elt),))
 
+    # Make our substitution type match the elements facets,
+    # since typecode is created for a single existing pyobj
+    # some facets are irrelevant.
+    sub = _copy(sub)
     sub.nspname = typecode.nspname
     sub.pname = typecode.pname
     sub.aname = typecode.aname
-    sub.minOccurs = 1
-    sub.maxOccurs = 1
+    sub.minOccurs = sub.maxOccurs = 1
     return sub
 
-
-def _get_any_instances(ofwhat, d):
-    '''Run thru list ofwhat.anames and find unmatched keys in value
-    dictionary d.  Assume these are element wildcard instances.  
-    '''
-    any_keys = []
-    anames = map(lambda what: what.aname, ofwhat)
-    for aname,pyobj in d.items():
-        if isinstance(pyobj, AnyType) or aname in anames or pyobj is None:
-            continue
-        any_keys.append(aname)
-    return any_keys
-        
 
 
 
 class ComplexType(TypeCode):
-    '''Represents an element of complexType, potentially containing other 
+    '''Represents an element of complexType, potentially containing other
     elements.
     '''
     logger = _GetLogger('ZSI.TCcompound.ComplexType')
-    
+
     def __init__(self, pyclass, ofwhat, pname=None, inorder=False, inline=False,
-    mutable=True, mixed=False, mixed_aname='_text', **kw):
+    mutable=True, mixed=False, mixed_aname='_text', prefix=None, **kw):
         '''pyclass -- the Python class to hold the fields
         ofwhat -- a list of fields to be in the complexType
         inorder -- fields must be in exact order or not
@@ -110,12 +105,14 @@ class ComplexType(TypeCode):
         mixed -- mixed content model? True/False
         mixed_aname -- if mixed is True, specify text content here. Default _text
         '''
-        TypeCode.__init__(self, pname, pyclass=pyclass, **kw)
+        #print 'MIXED ->',  mixed ,  '   MIXED_ANAME ->',  mixed_aname
+        TypeCode.__init__(self, pname, pyclass=pyclass, prefix=prefix, **kw)
         self.inorder = inorder
         self.inline = inline
         self.mutable = mutable
         self.mixed = mixed
         self.mixed_aname = None
+        #self.prefix = prefix
         if mixed is True:
             self.mixed_aname = mixed_aname
 
@@ -134,23 +131,24 @@ class ComplexType(TypeCode):
                         str(type(self.pyclass)))
             _check_typecode_list(self.ofwhat, 'ComplexType')
 
+
     def parse(self, elt, ps):
         debug = self.logger.debugOn()
         debug and self.logger.debug('parse')
-        
+
         xtype = self.checkname(elt, ps)
         if self.type and xtype not in [ self.type, (None,None) ]:
             if not isinstance(self, TypeDefinition):
                 raise EvaluateException(\
                     'ComplexType for %s has wrong type(%s), looking for %s' %
-                        (self.pname, self.checktype(elt,ps), self.type), 
+                        (self.pname, self.checktype(elt,ps), self.type),
                                         ps.Backtrace(elt))
             else:
-                #TODO: mabye change MRO to handle this 
+                #TODO: mabye change MRO to handle this
                 debug and self.logger.debug('delegate to substitute type')
                 what = TypeDefinition.getSubstituteType(self, elt, ps)
                 return what.parse(elt, ps)
-            
+
         href = _find_href(elt)
         if href:
             if _children(elt):
@@ -177,32 +175,41 @@ class ComplexType(TypeCode):
         # Clone list of kids (we null it out as we process)
         c, crange = c[:], range(len(c))
         # Loop over all items we're expecting
-        
+
         if debug:
             self.logger.debug("ofwhat: %s",str(self.ofwhat))
-            
+
         any = None
         for i,what in [ (i, self.ofwhat[i]) for i in range(len(self.ofwhat)) ]:
-            
+
             # retrieve typecode if it is hidden
             if callable(what): what = what()
-            
+
             # Loop over all available kids
-            if debug: 
+            if debug:
                 self.logger.debug("what: (%s,%s)", what.nspname, what.pname)
-                
+
             for j,c_elt in [ (j, c[j]) for j in crange if c[j] ]:
+                # Parse value, and mark this one done.
                 if debug:
-                    self.logger.debug("child node: (%s,%s)", c_elt.namespaceURI, 
-                                      c_elt.tagName)
+                    self.logger.debug("child node: (%s,%s)", c_elt.namespaceURI, c_elt.tagName)
+
+                match = False
                 if what.name_match(c_elt):
-                    # Parse value, and mark this one done. 
-                    try:
-                        value = what.parse(c_elt, ps)
-                    except EvaluateException, e:
-                        #what = _get_substitute_element(c_elt, what)
-                        #value = what.parse(c_elt, ps)
-                        raise
+                    match = True
+                    value = what.parse(c_elt, ps)
+                else:
+                    # substitutionGroup head must be a global element declaration
+                    # if successful delegate to matching GED
+                    subwhat = _get_substitute_element(what, c_elt, ps)
+                    if subwhat:
+                        match = True
+                        value = subwhat.parse(c_elt, ps)
+
+                    if debug:
+                        self.logger.debug("substitutionGroup: %s", subwhat)
+
+                if match:
                     if what.maxOccurs > 1:
                         if v.has_key(what.aname):
                             v[what.aname].append(value)
@@ -214,10 +221,9 @@ class ComplexType(TypeCode):
                         v[what.aname] = value
                     c[j] = None
                     break
-                else:
-                    if debug:
-                        self.logger.debug("no element (%s,%s)",
-                                          what.nspname, what.pname)
+
+                if debug:
+                    self.logger.debug("no element (%s,%s)", what.nspname, what.pname)
 
                 # No match; if it was supposed to be here, that's an error.
                 if self.inorder is True and i == j:
@@ -254,7 +260,7 @@ class ComplexType(TypeCode):
                 raise EvaluateException('occurances of <any> elements(#%d) bound by (%d,%s)' %(
                     occurs, any.minOccurs,str(any.maxOccurs)), ps.Backtrace(elt))
 
-        if not self.pyclass: 
+        if not self.pyclass:
             return v
 
         # type definition must be informed of element tag (nspname,pname),
@@ -279,28 +285,36 @@ class ComplexType(TypeCode):
             sw.AddCallback(self.cb, elt, sw, pyobj)
 
     def cb(self, elt, sw, pyobj, name=None, **kw):
+        # FIXME: utilizado para nao confundir as tuplas passadas como
+        # parametro. Apenas uma classica representacao de tupla com outro
+        # nome
+        class mytuple(tuple):
+            def __init__(self, valor):
+                tuple.__init__(self, valor)
         debug = self.logger.debugOn()
         if debug:
-            self.logger.debug("cb: %s" %str(self.ofwhat))
+            hahself.logger.debug("cb: %s" %str(self.ofwhat))
 
         objid = _get_idstr(pyobj)
         ns,n = self.get_name(name, objid)
+        # FIXME: apanhando o prefix para o caso de classes
+        # ComplexTypeComplexContent que utilizam extension
+        prefix = getattr(self, 'prefix', None) or getattr(self.__class__, 'prefix', None)
+
         if pyobj is None:
             if self.nillable is True:
-                elem = elt.createAppendElement(ns, n)
+                elem = elt.createAppendElement(ns, n, prefix=prefix)
                 self.serialize_as_nil(elem)
                 return
             raise EvaluateException, 'element(%s,%s) is not nillable(%s)' %(
                 self.nspname,self.pname,self.nillable)
-
-        if self.mutable is False and sw.Known(pyobj): 
+        if self.mutable is False and sw.Known(pyobj):
             return
-        
+
         if debug:
             self.logger.debug("element: (%s, %s)", str(ns), n)
-            
         if n is not None:
-            elem = elt.createAppendElement(ns, n)
+            elem = elt.createAppendElement(ns, n, prefix=prefix)
             self.set_attributes(elem, pyobj)
             if kw.get('typed', self.typed) is True:
                 self.set_attribute_xsi_type(elem)
@@ -313,7 +327,7 @@ class ComplexType(TypeCode):
                        textContent.typecode.serialize_text_node(elem, sw, textContent)
                    elif type(textContent) in _stringtypes:
                        if debug:
-                           self.logger.debug("mixed text content:\n\t%s", 
+                           self.logger.debug("mixed text content:\n\t%s",
                                              textContent)
                        elem.createAppendTextNode(textContent)
                    else:
@@ -321,13 +335,12 @@ class ComplexType(TypeCode):
                            self.nspname,self.pname), sw.Backtrace(elt))
                else:
                    if debug:
-                       self.logger.debug("mixed NO text content in %s", 
+                       self.logger.debug("mixed NO text content in %s",
                                          self.mixed_aname)
         else:
-            #For information items w/o tagNames 
+            #For information items w/o tagNames
             #  ie. model groups,SOAP-ENC:Header
             elem = elt
-
         if self.inline:
             pass
         elif not self.inline and self.unique:
@@ -339,20 +352,27 @@ class ComplexType(TypeCode):
         if self.pyclass and type(self.pyclass) is type:
             f = lambda attr: getattr(pyobj, attr, None)
         elif self.pyclass:
+            """
             d = pyobj.__dict__
-            f = lambda attr: d.get(attr)
+            # FIXME: as clausulas depois de or foram adicionadas devido ha
+            # um bug da biblioteca que nao preve nomes diferentes da notacao
+            # camelcase e para suportar a mudanca do nome do atributo
+            f = lambda attr: (d.get(attr), mytuple((('%s%s%s' % (attr[:1], attr[1].lower(), attr[2:])), d.get('%s%s%s' % (attr[:1], attr[1].lower(), attr[2:]), None))))[int((d.get(attr, None) is None))]
+            """
+            # FIXME: A alteracao acima alterava o nome da tag, causando erro na integracao.
+            f = lambda attr: pyobj.__dict__.get(attr)
         else:
             d = pyobj
             f = lambda attr: pyobj.get(attr)
             if TypeCode.typechecks and type(d) != types.DictType:
-                raise TypeError("Classless struct didn't get dictionary")
+                raise TypeError("Classless complexType didn't get dictionary")
 
         indx, lenofwhat = 0, len(self.ofwhat)
         if debug:
-            self.logger.debug('element declaration (%s,%s)', self.nspname, 
+            self.logger.debug('element declaration (%s,%s)', self.nspname,
                               self.pname)
             if self.type:
-                self.logger.debug('xsi:type definition (%s,%s)', self.type[0], 
+                self.logger.debug('xsi:type definition (%s,%s)', self.type[0],
                                   self.type[1])
             else:
                 self.logger.warning('NO xsi:type')
@@ -360,12 +380,12 @@ class ComplexType(TypeCode):
         while indx < lenofwhat:
             occurs = 0
             what = self.ofwhat[indx]
-            
+
             # retrieve typecode if hidden
             if callable(what): what = what()
-            
+
             if debug:
-                self.logger.debug('serialize what -- %s', 
+                self.logger.debug('serialize what -- %s',
                                   what.__class__.__name__)
 
             # No way to order <any> instances, so just grab any unmatched
@@ -375,31 +395,40 @@ class ComplexType(TypeCode):
             # Regular handling of declared elements
             aname = what.aname
             v = f(aname)
+            # FIXME: se o valor retornado por f for uma tupla significa que
+            # ha erro com o nome dos atributos, sendo entao retornada uma tupla
+            # com o nome do atributo corrigido na primeira posicao e o valor na
+            # segunda
+            if isinstance(v, mytuple):
+                what.pname, v = v
+                what.pname = what.pname.replace('_', '')
             indx += 1
-            if what.minOccurs == 0 and v is None: 
+            if what.minOccurs == 0 and v is None:
                 continue
 
-            # Default to typecode, if self-describing instance, and check 
+            # Default to typecode, if self-describing instance, and check
             # to make sure it is derived from what.
             whatTC = what
             if whatTC.maxOccurs > 1 and v is not None:
                 if type(v) not in _seqtypes:
                     raise EvaluateException('pyobj (%s,%s), aname "%s": maxOccurs %s, expecting a %s' %(
-                         self.nspname,self.pname,what.aname,whatTC.maxOccurs,_seqtypes), 
+                         self.nspname,self.pname,what.aname,whatTC.maxOccurs,_seqtypes),
                          sw.Backtrace(elt))
 
-                for v2 in v: 
+                for v2 in v:
                     occurs += 1
                     if occurs > whatTC.maxOccurs:
                         raise EvaluateException('occurances (%d) exceeded maxOccurs(%d) for <%s>' %(
-                                occurs, whatTC.maxOccurs, what.pname), 
+                                occurs, whatTC.maxOccurs, what.pname),
                                 sw.Backtrace(elt))
-                        
+
                     what = _get_type_or_substitute(whatTC, v2, sw, elt)
                     if debug and what is not whatTC:
                         self.logger.debug('substitute derived type: %s' %
                                           what.__class__)
-                        
+                    # FIXME: linhas adicionadas para funcionar com atributos mixed
+                    what.mixed = getattr(what,  'mixed',  False) or getattr(v2,  'mixed',  False)
+                    what.mixed_aname = getattr(what,  'mixed_aname',  False) or '_text'
                     what.serialize(elem, sw, v2, **kw)
 #                    try:
 #                        what.serialize(elem, sw, v2, **kw)
@@ -411,7 +440,7 @@ class ComplexType(TypeCode):
                     raise EvaluateException(\
                         'occurances(%d) less than minOccurs(%d) for <%s>' %
                         (occurs, whatTC.minOccurs, what.pname), sw.Backtrace(elt))
-                    
+
                 continue
 
             if v is not None or what.nillable is True:
@@ -419,6 +448,9 @@ class ComplexType(TypeCode):
                 if debug and what is not whatTC:
                     self.logger.debug('substitute derived type: %s' %
                                       what.__class__)
+                # FIXME: linhas adicionadas para funcionar com atributos mixed
+                what.mixed = getattr(what,  'mixed',  False) or getattr(v,  'mixed',  False)
+                what.mixed_aname = getattr(what,  'mixed_aname',  False) or '_text'
                 what.serialize(elem, sw, v, **kw)
 #                try:
 #                    what.serialize(elem, sw, v, **kw)
@@ -429,14 +461,15 @@ class ComplexType(TypeCode):
 #                        (n, whatTC.aname or '?', e.__class__.__name__, str(e)),
 #                        sw.Backtrace(elt))
                 continue
-
+            """
             raise EvaluateException('Got None for nillable(%s), minOccurs(%d) element (%s,%s), %s' %
                     (what.nillable, what.minOccurs, what.nspname, what.pname, elem),
                     sw.Backtrace(elt))
+            """
 
 
     def setDerivedTypeContents(self, extensions=None, restrictions=None):
-        """For derived types set appropriate parameter and 
+        """For derived types set appropriate parameter and
         """
         if extensions:
             ofwhat = list(self.ofwhat)
@@ -456,10 +489,10 @@ class ComplexType(TypeCode):
 
 
 class Struct(ComplexType):
-    '''Struct is a complex type for accessors identified by name. 
+    '''Struct is a complex type for accessors identified by name.
        Constraint: No element may have the same name as any other,
        nor may any element have a maxOccurs > 1.
-       
+
       <xs:group name="Struct" >
         <xs:sequence>
           <xs:any namespace="##any" minOccurs="0" maxOccurs="unbounded" processContents="lax" />
@@ -469,10 +502,10 @@ class Struct(ComplexType):
       <xs:complexType name="Struct" >
         <xs:group ref="tns:Struct" minOccurs="0" />
         <xs:attributeGroup ref="tns:commonAttributes"/>
-      </xs:complexType> 
+      </xs:complexType>
     '''
     logger = _GetLogger('ZSI.TCcompound.Struct')
-    
+
     def __init__(self, pyclass, ofwhat, pname=None, inorder=False, inline=False,
         mutable=True, **kw):
         '''pyclass -- the Python class to hold the fields
@@ -481,11 +514,11 @@ class Struct(ComplexType):
         inline -- don't href/id when serializing
         mutable -- object could change between multiple serializations
         '''
-        ComplexType.__init__(self, pyclass, ofwhat, pname=pname, 
-            inorder=inorder, inline=inline, mutable=mutable, 
+        ComplexType.__init__(self, pyclass, ofwhat, pname=pname,
+            inorder=inorder, inline=inline, mutable=mutable,
             **kw
             )
-        
+
         # Check Constraints
         whats = map(lambda what: (what.nspname,what.pname), self.ofwhat)
         for idx in range(len(self.ofwhat)):
@@ -501,12 +534,12 @@ class Struct(ComplexType):
 
 class Array(TypeCode):
     '''An array.
-        atype -- arrayType, (namespace,ncname) 
+        atype -- arrayType, (namespace,ncname)
         mutable -- object could change between multiple serializations
         undeclared -- do not serialize/parse arrayType attribute.
     '''
     logger = _GetLogger('ZSI.TCcompound.Array')
-    
+
     def __init__(self, atype, ofwhat, pname=None, dimensions=1, fill=None,
     sparse=False, mutable=False, size=None, nooffset=0, undeclared=False,
     childnames=None, **kw):
@@ -534,6 +567,9 @@ class Array(TypeCode):
                 self.size = tuple(self.size)
             elif TypeCode.typechecks:
                 raise TypeError('Size must be integer or list, not ' + str(t))
+
+        # by default use Any
+        ofwhat = ofwhat or Any()
 
         if TypeCode.typechecks:
             if self.undeclared is False and type(atype) not in _seqtypes and len(atype) == 2:
@@ -607,7 +643,7 @@ class Array(TypeCode):
         debug = self.logger.debugOn()
         if debug:
             self.logger.debug("serialize: %r" %pyobj)
-        
+
         if self.mutable is False and sw.Known(pyobj): return
         objid = _get_idstr(pyobj)
         ns,n = self.get_name(name, objid)
@@ -627,7 +663,7 @@ class Array(TypeCode):
             self.set_attribute_href(el, objid)
             return None
 
-        # xsi:type attribute 
+        # xsi:type attribute
         if kw.get('typed', self.typed) is True:
             self.set_attribute_xsi_type(el, **kw)
 
@@ -640,11 +676,11 @@ class Array(TypeCode):
             offset, end = 0, len(pyobj)
             while offset < end and pyobj[offset] == self.fill:
                 offset += 1
-            if offset: 
+            if offset:
                 el.setAttributeNS(SOAP.ENC, 'offset', '[%d]' %offset)
 
         if self.undeclared is False:
-            el.setAttributeNS(SOAP.ENC, 'arrayType', 
+            el.setAttributeNS(SOAP.ENC, 'arrayType',
                 '%s:%s' %(el.getPrefix(self.atype[0]), self.atype[1])
             )
 
@@ -657,7 +693,7 @@ class Array(TypeCode):
             d['name'] = kn
         elif not self.ofwhat.aname:
             d['name'] = 'element'
-            
+
         if self.sparse is False:
             for e in pyobj[offset:]: self.ofwhat.serialize(el, sw, e, **d)
         else:

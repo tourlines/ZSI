@@ -1,5 +1,5 @@
 #! /usr/bin/env python
-# $Id: writer.py 1270 2006-10-19 22:31:07Z boverhof $
+# $Id: writer.py 1367 2007-03-27 19:20:47Z boverhof $'
 '''SOAP message serialization.
 '''
 
@@ -89,7 +89,7 @@ class SoapWriter:
               instance must specify the typecode attribute.
         '''
         self.body = None
-        if self.envelope: 
+        if self.envelope:
             soap_env = _reserved_ns['SOAP-ENV']
             self.dom.createDocument(soap_env, 'Envelope')
             for prefix, nsuri in _reserved_ns.items():
@@ -103,14 +103,12 @@ class SoapWriter:
 
                 for h in header_pyobjs:
                     self.serialize_header(h, **kw)
-
             self.body = self.dom.createAppendElement(soap_env, 'Body')
         else:
             self.dom.createDocument(None,None)
 
-        if typecode is None: typecode = pyobj.__class__.typecode
-        kw = kw.copy()
-            
+        if typecode is None:
+            typecode = pyobj.__class__.typecode
         if self.body is None:
             elt = typecode.serialize(self.dom, self, pyobj, **kw)
         else:

@@ -103,9 +103,9 @@ def _Dispatch(ps, server, SendResponse, SendFault, post, action, nsdict={}, **kw
 
     try:
         if isWSResource is True: 
-            result = method(ps, address)
+            request,result = method(ps, address)
         else: 
-            result = method(ps)
+            request,result = method(ps)
     except Exception, e:
         return SendFault(FaultFromException(e, 0, sys.exc_info()[2]), **kw)
 
@@ -147,9 +147,6 @@ def AsServer(port=80, services=()):
     '''
     address = ('', port)
     sc = ServiceContainer(address, services)
-    #for service in services:
-    #    path = service.getPost()
-    #    sc.setNode(service, path)
     sc.serve_forever()
 
 
@@ -232,7 +229,7 @@ class WSAResource(ServiceSOAPBinding):
     '''
     encoding = "UTF-8"
 
-    def __init__(self, post=None):
+    def __init__(self, post):
         '''
         post -- POST value
         '''

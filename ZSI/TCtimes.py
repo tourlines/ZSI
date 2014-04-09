@@ -33,7 +33,7 @@ class _localtimezone(_tzinfo):
                  dt.hour, dt.minute, dt.second, dt.weekday(), 0, -1)))
         if tt.tm_isdst > 0: return _dstdiff
         return _zero
-    
+
     #def fromutc(...)
     #datetime in UTC -> datetime in local time.
 
@@ -52,7 +52,7 @@ class _localtimezone(_tzinfo):
 
 class _fixedoffset(_tzinfo):
     """Fixed offset in minutes east from UTC.
-    
+
     A class building tzinfo objects for fixed-offset time zones.
     Note that _fixedoffset(0, "UTC") is a different way to build a
     UTC tzinfo object.
@@ -61,54 +61,54 @@ class _fixedoffset(_tzinfo):
     def __init__(self, offset):
         self.__offset = _timedelta(minutes=offset)
         #self.__name = name
-        
+
     def dst(self, dt):
         """datetime -> DST offset in minutes east of UTC."""
         return _zero
-    
+
     def tzname(self, dt):
         """datetime -> string name of time zone."""
         #return self.__name
         return "server"
-    
+
     def utcoffset(self, dt):
         """datetime -> minutes east of UTC (negative for west of UTC)."""
         return self.__offset
 
-    
+
 def _dict_to_tuple(d):
     '''Convert a dictionary to a time tuple.  Depends on key values in the
     regexp pattern!
-    '''    
-    # TODO: Adding a ms field to struct_time tuples is problematic 
+    '''
+    # TODO: Adding a ms field to struct_time tuples is problematic
     # since they don't have this field.  Should use datetime
-    # which has a microseconds field, else no ms..  When mapping struct_time 
+    # which has a microseconds field, else no ms..  When mapping struct_time
     # to gDateTime the last 3 fields are irrelevant, here using dummy values to make
     # everything happy.
-    # 
+    #
 
     retval = _niltime[:]
     for k,i in ( ('Y', 0), ('M', 1), ('D', 2), ('h', 3), ('m', 4), ):
         v = d.get(k)
         if v: retval[i] = int(v)
-        
+
     v = d.get('s')
     if v:
         msec,sec = _modf(float(v))
         retval[6],retval[5] = int(round(msec*1000)), int(sec)
-            
+
     v = d.get('tz')
     if v and v != 'Z':
         h,m = map(int, v.split(':'))
-        # check for time zone offset, if within the same timezone, 
+        # check for time zone offset, if within the same timezone,
         # ignore offset specific calculations
         offset=_localtimezone().utcoffset(_datetime.now())
         local_offset_hour = offset.seconds/3600
         local_offset_min = (offset.seconds%3600)%60
-        if local_offset_hour > 12: 
+        if local_offset_hour > 12:
             local_offset_hour -= 24
-            
-        if local_offset_hour != h or local_offset_min != m:                
+
+        if local_offset_hour != h or local_offset_min != m:
             if h<0:
                 #TODO: why is this set to server
                 #foff = _fixedoffset(-((abs(h)*60+m)),"server")
@@ -116,11 +116,11 @@ def _dict_to_tuple(d):
             else:
                 #TODO: why is this set to server
                 #foff = _fixedoffset((abs(h)*60+m),"server")
-                foff = _fixedoffset((abs(h)*60+m)) 
-                
+                foff = _fixedoffset((abs(h)*60+m))
+
             dt = _datetime(retval[0],retval[1],retval[2],retval[3],retval[4],
                            retval[5],0,foff)
-            
+
             # update dict with calculated timezone
             localdt=dt.astimezone(_localtimezone())
             retval[0] = localdt.year
@@ -129,7 +129,7 @@ def _dict_to_tuple(d):
             retval[3] = localdt.hour
             retval[4] = localdt.minute
             retval[5] = localdt.second
-            
+
     if d.get('neg', 0):
         retval[0:5] = map(operator.__neg__, retval[0:5])
     return tuple(retval)
@@ -161,15 +161,15 @@ class Duration(SimpleType):
             retval = _dict_to_tuple(d)
         except ValueError, e:
             raise EvaluateException(str(e))
-    
+
         if self.pyclass is not None:
             return self.pyclass(retval)
-        return retval  
-    
+        return retval
+
     def get_formatted_content(self, pyobj):
         if type(pyobj) in _floattypes or type(pyobj) in _inttypes:
             pyobj = _gmtime(pyobj)
-        
+
         d = {}
         pyobj = tuple(pyobj)
         if 1 in map(lambda x: x < 0, pyobj[0:6]):
@@ -177,12 +177,12 @@ class Duration(SimpleType):
             neg = '-'
         else:
             neg = ''
-            
+
         val = '%sP%dY%dM%dDT%dH%dM%dS' % \
             ( neg, pyobj[0], pyobj[1], pyobj[2], pyobj[3], pyobj[4], pyobj[5])
 
         return val
-        
+
 
 class Gregorian(SimpleType):
     '''Gregorian times.
@@ -194,7 +194,7 @@ class Gregorian(SimpleType):
         '''
         if text is None:
             return None
-        
+
         m = self.lex_pattern.match(text)
         if not m:
             raise EvaluateException('Bad Gregorian: %s' %text, ps.Backtrace(elt))
@@ -203,15 +203,15 @@ class Gregorian(SimpleType):
         except ValueError, e:
             #raise EvaluateException(str(e))
             raise
-        
+
         if self.pyclass is not None:
             return self.pyclass(retval)
-        return retval    
+        return retval
 
     def get_formatted_content(self, pyobj):
         if type(pyobj) in _floattypes or type(pyobj) in _inttypes:
             pyobj = _gmtime(pyobj)
-        
+
         d = {}
         pyobj = tuple(pyobj)
         if 1 in map(lambda x: x < 0, pyobj[0:6]):
@@ -221,7 +221,7 @@ class Gregorian(SimpleType):
             d['neg'] = ''
 
         ms = pyobj[6]
-        if not ms or not hasattr(self, 'format_ms'): 
+        if not ms or not hasattr(self, 'format_ms'):
             d = { 'Y': pyobj[0], 'M': pyobj[1], 'D': pyobj[2],
                 'h': pyobj[3], 'm': pyobj[4], 's': pyobj[5], }
             return self.format % d
@@ -232,7 +232,7 @@ class Gregorian(SimpleType):
         d = { 'Y': pyobj[0], 'M': pyobj[1], 'D': pyobj[2],
             'h': pyobj[3], 'm': pyobj[4], 's': pyobj[5], 'ms':ms, }
         return self.format_ms % d
- 
+
 
 class gDateTime(Gregorian):
     '''A date and time.
@@ -253,7 +253,10 @@ class gDate(Gregorian):
     lex_pattern = re.compile('^' r'(?P<neg>-?)' \
                         '(?P<Y>\d{4,})-' r'(?P<M>\d\d)-' r'(?P<D>\d\d)' \
                         r'(?P<tz>Z|([-+]\d\d:\d\d))?' '$')
-    tag, format = 'date', '%(Y)04d-%(M)02d-%(D)02dZ'
+    # XXX FIXME: retirando o Z no final pois a data da Gol estava vindo de
+    # forma errada
+    #tag, format = 'date', '%(Y)04d-%(M)02d-%(D)02dZ'
+    tag, format = 'date', '%(Y)04d-%(M)02d-%(D)02d'
     type = (SCHEMA.XSD3, 'date')
 
 class gYearMonth(Gregorian):
@@ -296,7 +299,7 @@ class gDay(Gregorian):
                         r'(?P<tz>Z|([-+]\d\d:\d\d))?' '$')
     tag, format = 'gDay', '---%(D)02dZ'
     type = (SCHEMA.XSD3, 'gDay')
-    
+
 class gMonth(Gregorian):
     '''A gMonth.
     '''
@@ -306,7 +309,7 @@ class gMonth(Gregorian):
                         r'(?P<tz>Z|([-+]\d\d:\d\d))?' '$')
     tag, format = 'gMonth', '---%(M)02dZ'
     type = (SCHEMA.XSD3, 'gMonth')
-    
+
 class gTime(Gregorian):
     '''A time.
     '''

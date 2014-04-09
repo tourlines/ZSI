@@ -20,9 +20,9 @@ from ZSI.wstools.Namespaces import WSA
 from WSresource import HandlerChainInterface, CheckInputArgs
 
 
-#
+# 
 # Stability: Unstable
-#
+# 
 
 class HTTPPageGetter(client.HTTPPageGetter):
     def handleStatus_500(self):
@@ -33,6 +33,7 @@ class HTTPPageGetter(client.HTTPPageGetter):
         """client error, not found
         """
         log.err('HTTP Error 404')
+
 
 client.HTTPClientFactory.protocol = HTTPPageGetter
 
@@ -48,16 +49,12 @@ def getPage(url, contextFactory=None, *args, **kwargs):
     scheme, host, port, path = client._parse(url)
     factory = client.HTTPClientFactory(url, *args, **kwargs)
     if scheme == 'https':
-        # FIXME: adicionando um ContextFactory "automatico" como sugerido
-        # pela classe na qual se baseia esta
-        # FIXME: anteriormente era como neste comentario
-        #if contextFactory is None:
-        #   raise RuntimeError, 'must provide a contextFactory'
-        from twisted.internet.ssl import ClientContextFactory
-        contextFactory = ClientContextFactory()
+        if contextFactory is None:
+            raise RuntimeError, 'must provide a contextFactory'
         conn = reactor.connectSSL(host, port, factory, contextFactory)
     else:
         conn = reactor.connectTCP(host, port, factory)
+
     return factory
 
 
@@ -65,7 +62,7 @@ class ClientDataHandler:
     """
     class variables:
         readerClass -- factory class to create reader for ParsedSoap instances.
-        writerClass -- ElementProxy implementation to use for SoapWriter
+        writerClass -- ElementProxy implementation to use for SoapWriter 
             instances.
     """
     classProvides(HandlerChainInterface)
@@ -82,16 +79,18 @@ class ClientDataHandler:
         if len(soapdata) == 0:
             raise TypeError('Received empty response')
 
-#        log.msg("_" * 33, time.ctime(time.time()),
+#        log.msg("_" * 33, time.ctime(time.time()), 
 #                  "RESPONSE: \n%s" %soapdata, debug=True)
+
         ps = ParsedSoap(soapdata, readerclass=cls.readerClass)
         if ps.IsAFault() is True:
             log.msg('Received SOAP:Fault', debug=True)
             raise FaultFromFaultMessage(ps)
+
         return ps
 
     @classmethod
-    def processRequest(cls, obj, nsdict={}, header=True,  soapheaders={},
+    def processRequest(cls, obj, nsdict={}, header=True, 
                        **kw):
         tc = None
         if kw.has_key('requesttypecode'):
@@ -100,28 +99,25 @@ class ClientDataHandler:
             tc = kw['requestclass'].typecode
         else:
             tc = getattr(obj.__class__, 'typecode', None)
+
         sw = SoapWriter(nsdict=nsdict, header=header,
                         outputclass=cls.writerClass)
         sw.serialize(obj, tc)
-        # FIXME: adicionando os headers
-        for i in soapheaders:
-           sw.serialize_header(i)
         return sw
-
-
+    
+    
 class WSAddressHandler:
     """Minimal WS-Address handler.  Most of the logic is in
     the ZSI.address.Address class.
-
+    
     class variables:
         uri -- default WSA Addressing URI
     """
     implements(HandlerChainInterface)
     uri = WSA.ADDRESS
-
-
+    
     def processResponse(self, ps, wsaction=None, soapaction=None, **kw):
-        addr = self.address
+        addr = self.address 
         addr.parse(ps)
         action = addr.getAction()
         if not action:
@@ -129,7 +125,7 @@ class WSAddressHandler:
 
         if not soapaction:
             return ps
-
+    
         soapaction = soapaction.strip('\'"')
         if soapaction and soapaction != wsaction:
             raise WSActionException(\
@@ -144,14 +140,14 @@ class WSAddressHandler:
         if sw is None:
             self.address = None
             return
-
+        
         if not sw.header:
             raise RuntimeError, 'expecting SOAP:Header'
-
+        
         self.address = addr = Address(url, wsAddressURI=self.uri)
         addr.setRequest(endPointReference, wsaction)
         addr.serialize(sw, typed=False)
-
+        
         return sw
 
 
@@ -162,52 +158,39 @@ class DefaultClientHandlerChain:
         self.handlers = handlers
         self.debug = len(log.theLogPublisher.observers) > 0
         self.flow = None
-
+        
     @staticmethod
-    def parseResponse(ps, replytype,  **kw):
-        # FIXME: modificado em tudo no intuito de dar suporte ao callback
-        # do response (doResponse)
-        headers = kw.get('getheaders',  None)
-        doResponse = kw.get('doResponse',  None)
-        if headers is not None:
-            class ConvertHeaders(object):
-                def __init__(self,  headers={}):
-                    for k,  v in headers.iteritems():
-                        setattr(self,  k[1],  v)
-            headers = ConvertHeaders(ps.ParseHeaderElements(headers))
-        content = ps.Parse(replytype)
-        if doResponse is not None and callable(doResponse):
-            doResponse(headers,  content)
-        return content
-
+    def parseResponse(ps, replytype):
+        return ps.Parse(replytype)
+        
     def processResponse(self, arg, replytype, **kw):
         """
         Parameters:
-            arg -- deferred
+            arg -- deferred 
             replytype -- typecode
         """
         if self.debug:
-            log.msg('--->PROCESS REQUEST\n%s' % arg, debug=1)
+            log.msg('--->PROCESS REQUEST\n%s' %arg, debug=1)
 
         for h in self.handlers:
             arg.addCallback(h.processResponse, **kw)
-
-        arg.addCallback(self.parseResponse, replytype,  **kw)
-
+            
+        arg.addCallback(self.parseResponse, replytype)
+            
     def processRequest(self, arg, **kw):
         """
         Parameters:
             arg -- XML Soap data string
         """
         if self.debug:
-            log.msg('===>PROCESS RESPONSE: %s' % str(arg), debug=1)
+            log.msg('===>PROCESS RESPONSE: %s' %str(arg), debug=1)
 
         if arg is None:
             return
 
         for h in self.handlers:
             arg = h.processRequest(arg, **kw)
-
+            
         s = str(arg)
         if self.debug:
             log.msg(s, debug=1)
@@ -217,18 +200,18 @@ class DefaultClientHandlerChain:
 
 class DefaultClientHandlerChainFactory:
     protocol = DefaultClientHandlerChain
-
+    
     @classmethod
     def newInstance(cls):
         return cls.protocol(ClientDataHandler)
-
+        
 
 class WSAddressClientHandlerChainFactory:
     protocol = DefaultClientHandlerChain
-
+    
     @classmethod
     def newInstance(cls):
-        return cls.protocol(ClientDataHandler,
+        return cls.protocol(ClientDataHandler, 
             WSAddressHandler())
 
 
@@ -239,11 +222,11 @@ class Binding:
     factory = DefaultClientHandlerChainFactory
     defer = False
 
-    def __init__(self, url=None, nsdict=None, contextFactory=None,
+    def __init__(self, url=None, nsdict=None, contextFactory=None, 
                  tracefile=None, **kw):
         """Initialize.
         Keyword arguments include:
-            url -- URL of resource, POST is path
+            url -- URL of resource, POST is path 
             nsdict -- namespace entries to add
             contextFactory -- security contexts
             tracefile -- file to dump packet traces
@@ -251,69 +234,68 @@ class Binding:
         self.url = url
         self.nsdict = nsdict or {}
         self.contextFactory = contextFactory
-        # FIXME: como nosso padrao e utf8, adicionei arbitrariamente
-        self.http_headers  = {'Content-Type': 'text/xml; charset=utf8',}
+        self.http_headers  = {'content-type': 'text/xml',}
         self.trace = tracefile
 
     def addHTTPHeader(self, key, value):
         self.http_headers[key] = value
-
+   
     def getHTTPHeaders(self):
         return self.http_headers
-
-    def Send(self, url, opname, pyobj, nsdict={}, soapaction=None, chain=None,
-             soapheaders=(),  **kw):
-        """Returns a ProcessingChain which needs to be passed to Receive if
+        
+    def Send(self, url, opname, pyobj, nsdict={}, soapaction=None, chain=None, 
+             **kw):
+        """Returns a ProcessingChain which needs to be passed to Receive if 
         Send is being called consecutively.
         """
         url = url or self.url
         cookies = None
         if chain is not None:
             cookies = chain.flow.cookies
-
+        
         d = {}
         d.update(self.nsdict)
         d.update(nsdict)
-
+         
         if soapaction is not None:
             self.addHTTPHeader('SOAPAction', soapaction)
-
+        
         chain = self.factory.newInstance()
-        soapdata = chain.processRequest(pyobj, nsdict=nsdict,
-                                        soapaction=soapaction, soapheaders=soapheaders,  **kw)
-
+        soapdata = chain.processRequest(pyobj, nsdict=nsdict, 
+                                        soapaction=soapaction, **kw)
+            
         if self.trace:
             print >>self.trace, "_" * 33, time.ctime(time.time()), "REQUEST:"
             print >>self.trace, soapdata
 
-        f = getPage(str(url), contextFactory=self.contextFactory,
-                    postdata=soapdata, agent=self.agent,
-                    method='POST', headers=self.getHTTPHeaders(),
+        f = getPage(str(url), contextFactory=self.contextFactory, 
+                    postdata=soapdata, agent=self.agent, 
+                    method='POST', headers=self.getHTTPHeaders(), 
                     cookies=cookies)
-
+        
         if isinstance(f, Failure):
             return f
-
+        
         chain.flow = f
         self.chain = chain
         return chain
-
+            
     def Receive(self, replytype, chain=None, **kw):
-        """This method allows code to act in a synchronous manner, it waits to
-        return until the deferred fires but it doesn't prevent other queued
-        calls from being executed.  Send must be called first, which s2ets up
-        the chain/factory.
-
+        """This method allows code to act in a synchronous manner, it waits to 
+        return until the deferred fires but it doesn't prevent other queued 
+        calls from being executed.  Send must be called first, which sets up 
+        the chain/factory.  
+        
         WARNING: If defer is set to True, must either call Receive
         immediately after Send (ie. no intervening Sends) or pass
         chain in as a paramter.
-
-        Parameters:Unstable
+        
+        Parameters:
             replytype -- TypeCode
         KeyWord Parameters:
             chain -- processing chain, optional
-
-        """
+            
+        """        
         chain = chain or self.chain
         d = chain.flow.deferred
         if self.trace:
@@ -321,9 +303,9 @@ class Binding:
                 print >>self.trace, "_" * 33, time.ctime(time.time()), "RESPONSE:"
                 print >>self.trace, soapdata
                 return soapdata
-
+            
             d.addCallback(trace)
-
+            
         chain.processResponse(d, replytype, **kw)
         if self.defer:
             return d
@@ -331,13 +313,14 @@ class Binding:
         failure = []
         append = failure.append
         def errback(result):
-            """Used with Response method to suppress 'Unhandled error in
+            """Used with Response method to suppress 'Unhandled error in 
             Deferred' messages by adding an errback.
             """
             append(result)
             return None
-
+        
         d.addErrback(errback)
+
         # spin reactor
         while not d.called:
             reactor.runUntilCurrent()
@@ -348,6 +331,7 @@ class Binding:
         pyobj = d.result
         if len(failure):
             failure[0].raiseException()
+        
         return pyobj
 
 def trace():
