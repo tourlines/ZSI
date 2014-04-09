@@ -3,6 +3,7 @@ Esta é uma versão modificada do ZSI. Tais modificações foram iniciadas
 em 02/10/2008 e foram feitas por Ruhan Bidart <ruhanbidart@gmail.com>
 
 update: 01/10/2011 Rafael Quintela
+
 Alterado parte do código que causava erro ao trocar o nome de algumas tags.
 
 ----------------------------------------------------------------------
