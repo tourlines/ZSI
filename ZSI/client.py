@@ -439,23 +439,18 @@ class _Binding:
         if len(self.data) == 0:
             raise TypeError('Received empty response')
 
-        t = time.time()
-        #print 'Usando nakedsoap: ', self.use_nakedsoap
-
         if self.use_nakedsoap:
             try:
-                from doisxt.lib.nakedsoap import nsclient
+                from lib.nakedsoap import nsclient
                 self.ps = nsclient.HandlerResponse(self.data)
-                #print 'Tempo gasto para interpretar: ' + str(time.time()-t)
                 no_naked = False
             except ImportError:
-                print 'Para utilizar o nakedsoap voce precisa instalar a doisxt.lib'
+                print 'Para utilizar o nakedsoap voce precisa instalar a lib'
                 no_naked = True
         if not self.use_nakedsoap or no_naked:
             self.ps = ParsedSoap(self.data,
                             readerclass=readerclass or self.readerclass,
                             encodingStyle=kw.get('encodingStyle'))
-            #print 'Tempo gasto para o parseamento inicial: ', time.time()-t
 
             if self.sig_handler is not None:
                 self.sig_handler.verify(self.ps)
